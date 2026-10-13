@@ -296,7 +296,7 @@ withPool scope = unur $ Unsafe.toLinear performScope scope
     -- XXX: do ^ without `toLinear` by using linear IO
 
     performScope :: (Pool %1 -> b) -> Ur b
-    performScope scope' = unsafeDupablePerformIO $ do
+    performScope scope' = unsafePerformIO $ do
       -- Initialise the pool
       backPtr <- malloc
       let end = DLL backPtr nullPtr nullPtr -- always at the end of the list

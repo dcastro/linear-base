@@ -1,9 +1,13 @@
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LinearTypes #-}
 {-# LANGUAGE MagicHash #-}
+{-# LANGUAGE QualifiedDo #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RoleAnnotations #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UnboxedTuples #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
@@ -55,7 +59,7 @@ module System.IO.Linear
 where
 
 import Control.Exception (Exception)
-import qualified Control.Exception as System (catch, mask_, throwIO)
+import qualified Control.Exception as System (bracket, catch, mask_, throwIO)
 import qualified Control.Functor.Linear as Control
 import qualified Data.Functor.Linear as Data
 import Data.IORef (IORef)
@@ -203,3 +207,43 @@ mask_ :: IO a %1 -> IO a
 mask_ =
   -- `System.mask_` runs its argument exactly once and doesn't catch exceptions, so it's safe to make it linear.
   Unsafe.toLinear (\action -> fromSystemIO (System.mask_ (toSystemIO action)))
+
+bracket ::
+  forall a b c.
+  (Consumable b) =>
+  -- The resource `a` must be wrapped in `Ur`: it may be used more than once.
+  -- The arrow is linear: `acquire` will be used once (assuming `bracket` doesn't throw).
+  IO (Ur a) %1 ->
+  -- The value of the `release` function will be discarded, so it has to be `Consumable`
+  -- The arrow is linear: `release` will be used once (assuming `bracket` doesn't throw).
+  (a -> IO b) %1 ->
+  -- The arrow is linear: `use` will be used once (assuming `bracket` doesn't throw).
+  (a -> IO c) %1 ->
+  IO c
+bracket = Unsafe.toLinear3 bracket'
+  where
+    bracket' ::
+      IO (Ur a) ->
+      (a -> IO b) ->
+      (a -> IO c) ->
+      IO c
+    bracket' acquire release use = Control.do
+      let acquire' = toSystemIO acquire
+      let release' (Ur a) = toSystemIO Control.do
+            b <- release a
+            -- Consume `b`
+            b `lseq` Control.pure ()
+      let use' (Ur a) = toSystemIO (use a)
+      fromSystemIO
+        ( System.bracket @(Ur a) @() @c
+            acquire'
+            release'
+            use'
+        )
+
+bracket_ :: (Movable a, Consumable b) => IO a %1 -> IO b %1 -> IO c %1 -> IO c
+bracket_ acquire release use =
+  bracket
+    (move `Control.fmap` acquire)
+    (\_a -> release)
+    (\_a -> use)
